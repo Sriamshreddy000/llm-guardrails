@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+results/*/llm_cache.jsonl
+results/*/judge_cache.jsonl
+data/public.jsonl
+paper/*.aux
+paper/*.log
+paper/*.bbl
+paper/*.blg
+paper/*.out
+.DS_Store
+results/trial/
+scratch/

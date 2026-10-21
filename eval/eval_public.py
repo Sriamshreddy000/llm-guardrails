@@ -22,7 +22,7 @@ ap.add_argument("--file", default=str(ROOT / "data" / "public.jsonl"))
 ap.add_argument("--backend", choices=["none", "ollama"], default="none")
 ap.add_argument("--model", default="llama3.2:3b")
 ap.add_argument("--host", default="http://localhost:11434")
-ap.add_argument("--out", default="public_transfer")
+ap.add_argument("--out", default="public_transfer", help="results/<out>.json (and cache dir); use a new name per model")
 a = ap.parse_args()
 
 pub = [json.loads(l) for l in Path(a.file).read_text().splitlines() if l.strip()]
@@ -47,4 +47,4 @@ for name, g in guards.items():
                  "fpr_ci": wilson(fp, len(ben)), "n_attack": len(atk), "n_benign": len(ben)}
     print(f"{name:20s} recall {100*res[name]['recall']:5.1f}%  FPR {100*res[name]['fpr']:5.1f}%   (n={len(atk)} attacks, {len(ben)} benign)")
 Path(ROOT / "results").mkdir(exist_ok=True)
-(ROOT / "results" / "public_transfer.json").write_text(json.dumps(res, indent=2))
+(ROOT / "results" / f"{a.out}.json").write_text(json.dumps(res, indent=2))

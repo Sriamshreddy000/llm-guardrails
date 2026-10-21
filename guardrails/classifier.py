@@ -61,9 +61,15 @@ def calibrate(texts, labels, groups, target_fpr: float = 0.02, attack_miss: floa
     lo: score below which we let text through without asking the judge; chosen so ~attack_miss of
         attack training text falls below it.
     """
-    from sklearn.model_selection import GroupKFold, cross_val_predict
-    oof = cross_val_predict(make_pipeline(C), [_prep(t) for t in texts], labels, groups=groups,
-                            cv=GroupKFold(n_splits=folds), method="predict_proba")[:, 1]
+    import hashlib
+
+    import numpy as np
+    from sklearn.model_selection import cross_val_predict
+    # Fold = hash of the group name. Deterministic on every machine and library version (GroupKFold's tie-breaking is not),
+    # and still keeps every template / base question entirely inside one fold.
+    fold_of = np.array([int(hashlib.sha1(str(g).encode()).hexdigest(), 16) % folds for g in groups])
+    cv = [(np.where(fold_of != k)[0], np.where(fold_of == k)[0]) for k in range(folds) if (fold_of == k).any()]
+    oof = cross_val_predict(make_pipeline(C), [_prep(t) for t in texts], labels, cv=cv, method="predict_proba")[:, 1]
     ben = sorted(p for p, y in zip(oof, labels) if y == 0)
     atk = sorted(p for p, y in zip(oof, labels) if y == 1)
     hi = min(1.0, ben[min(len(ben) - 1, math.ceil((1 - target_fpr) * len(ben)) - 1)] + 1e-6)

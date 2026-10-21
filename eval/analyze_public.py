@@ -5,6 +5,7 @@
 
     python eval/analyze_public.py
 """
+import hashlib
 import json
 import re
 import sys
@@ -62,8 +63,8 @@ ptest = [r for r in pub if r["source"].endswith("test")]
 
 
 def as_rows(items):
-    return [{"text": r["text"], "doc": None, "label": r["label"], "template": f"pub::{hash(r['text'])}",
-             "base": f"pub::{hash(r['text'])}", "family": "public", "split": "train"} for r in items]
+    return [{"text": r["text"], "doc": None, "label": r["label"], "template": "pub::" + hashlib.sha1(r["text"].encode()).hexdigest()[:12],
+             "base": "pub::" + hashlib.sha1(r["text"].encode()).hexdigest()[:12], "family": "public", "split": "train"} for r in items]
 
 
 def evaluate(name, train_rows, use_rules_cascade=False):

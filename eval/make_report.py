@@ -108,18 +108,18 @@ def main():
                                                          "single": "Single layer", "combined": "Combined layers"}[GROUP[k]])
         shown.add(GROUP[k])
     short = {"baseline": "No defense", "structural": "Structural", "rules_in": "Rules", "clf_in": "Classifier",
-             "judge_in": "LLM judge", "full": "Full + canary", "full_nocanary": "Full (no canary)",
+             "judge_in": "LLM judge", "full": "Full (with or without canary)", "full_nocanary": "Full (no canary)",
              "canary_out": "Canary (output)"}
-    offs = {"baseline": (8, 2), "structural": (8, -10), "rules_in": (-6, 9), "clf_in": (8, 6), "judge_in": (8, 6),
-            "full": (8, 10), "full_nocanary": (8, -13), "canary_out": (8, 4)}
+    offs = {"baseline": (9, -12), "structural": (9, 4), "rules_in": (-6, 9), "clf_in": (8, 6), "judge_in": (9, 5),
+            "full": (8, 10), "canary_out": (9, -11)}
     for k, (dx, dy) in offs.items():
         if k in C:
             ax.annotate(short[k], (100 * C[k]["fpr"], 100 * C[k]["asr"]), xytext=(dx, dy),
                         textcoords="offset points", fontsize=7.5, color="#333333")
     ax.set_xlabel("False-positive rate on benign requests (%)  - lower is better")
     ax.set_ylabel("Attack success rate (%)  - lower is better")
-    ax.set_xlim(left=-1)
-    ax.set_ylim(bottom=-5)
+    ax.set_xlim(left=-0.4)
+    ax.set_ylim(bottom=-0.6)
     ax.legend(frameon=False, loc="upper right", fontsize=8)
     fig.tight_layout()
     fig.savefig(rep / "fig_tradeoff.png", dpi=200)

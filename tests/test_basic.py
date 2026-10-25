@@ -111,6 +111,22 @@ def test_cache_key_unchanged_without_format():
     assert cb._key(m, 0.0, 10) != cb._key(m, 0.0, 10, {"type": "object"})
 
 
+def test_adaptive_variants_are_deterministic_and_attempt0_is_original():
+    from eval.adaptive_search import pick_seeds, variant
+    from eval.run_eval import load_rows
+    rows = [r for r in load_rows() if r["split"] == "test"]
+    seeds = pick_seeds(rows, 2, 0)
+    assert seeds == pick_seeds(rows, 2, 0) and len({r["family"] for r in seeds}) == 9
+    for r in seeds:
+        assert variant(r, 0, 0)[:2] == (r["text"], r["doc"])
+        assert variant(r, 3, 0) == variant(r, 3, 0)               # same draw every time
+        assert variant(r, 3, 0) != variant(r, 3, 1)               # different seed, different draw
+        t, d, ops = variant(r, 3, 0)
+        assert ops and ((d != r["doc"]) if r["doc"] else (t != r["text"]))
+        if r["doc"]:
+            assert t == r["text"]                                  # the user's request is not rewritten, only the document
+
+
 if __name__ == "__main__":
     fns = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for f in fns:

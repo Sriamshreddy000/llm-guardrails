@@ -12,8 +12,8 @@
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 \newcommand{\mockbanner}{\ifmock\par\noindent\fbox{\parbox{0.96\linewidth}{\centering\textcolor{red}{\textbf{MOCK DATA --- produced by the offline test model. Not findings. Do not cite or submit.}}}}\par\medskip\fi}
 
-\title{Measuring Layered Defenses Against Prompt Injection:\\
-A Calibrated Cascade of Rules, Classifiers, and LLM Judges}
+\title{How Well Do Layered Prompt-Injection Guardrails Transfer?\\
+Calibration, False Alarms, and Cost Across Datasets}
 \author{[Author name]\\ \texttt{[email]}}
 \date{Draft of \resultDate}
 
@@ -23,18 +23,20 @@ A Calibrated Cascade of Rules, Classifiers, and LLM Judges}
 
 \begin{abstract}
 Companies that ship LLM features must stop users, and the documents those users supply, from overriding the
-application's instructions or extracting its secrets. Guardrails are usually built from one mechanism at a time
-(pattern rules, a trained classifier, or an LLM asked to judge), and are rarely evaluated for how much legitimate
-traffic they block or what they cost. We build a customer-support chatbot holding canary secrets, a
-\nAttack{}-attack held-out benchmark spanning nine attack families (including indirect injection through documents,
-obfuscation, multilingual and social-engineering attacks), and a set of \nBenign{} benign requests that includes
-deliberately suspicious-looking ``hard negatives''. We compare single layers, a three-stage cascade whose
-operating points are calibrated on out-of-fold scores, output-side checks, and a structural prompt defense, all against
-\resultModel{}. Attacks are scored by independent string-level checks, not by an LLM. Without defenses, \asrBase\% of
-attacks succeeded. The full cascade reached an attack success rate of \asrFull\% at a false-positive rate of
-\fprFull\%, calling the LLM judge on \judgeFrac\% of requests. We report all configurations with confidence
-intervals, per-family results, and a leave-one-family-out test of how well the trained classifier transfers to
-attack types it has never seen. Code, data generator, and evaluation harness are released.
+application's instructions or extracting its secrets. Guardrails are built from pattern rules, trained classifiers,
+or an LLM asked to judge, and are usually evaluated on data written by their own authors. We measure how a cascade of
+these layers performs end to end in a small customer-support application that holds canary secrets, and how
+the result changes on an independent prompt-injection dataset. On our \nAttack{}-attack benchmark (nine families,
+scored by string checks, not by an LLM), the full cascade let through \asrFull\% of attacks versus \asrBase\% undefended,
+at a false-positive rate of \fprFull\%. On the independent dataset the same guards fitted on our data behave very
+differently: the rules catch 8.4\% of injections, and a classifier that catches 66.9\% also flags 45.1\% of benign prompts.
+Most of the false alarms disappear (33.9\%\,$\to$\,0.0\% on a held-out split of 56 benign prompts) when the classifier is
+calibrated with in-domain data, and a larger judge model raises judge recall from 39.5\% to 58.9\% on the full set.
+Missed injections are mostly polite or story-style requests with no attack vocabulary. A simple query-based attacker
+(20 rewrites per attack) lifts success against single layers from about 2\% to 39--48\% and against the full stack to
+9\%, and retraining the classifier on evading attacks alone makes it block most benign requests written in the same
+styles. The study is small (one target model, a weak adaptive attacker, a 116-prompt held-out split), and it confirms, in
+a deployment-style setting, concerns raised by recent work on detector generalization and adaptive evaluation. Code, data generator and evaluation harness are released.
 \end{abstract}
 
 \section{Introduction}
@@ -42,39 +44,66 @@ LLM applications place untrusted text next to trusted instructions in a single c
 injection (``ignore your previous instructions'') and indirect injection (instructions hidden in a retrieved
 document or email) can make an application leak confidential information or act against its operator's intent
 \cite{perez2022ignore,greshake2023not,liu2023prompt}. Practitioners respond with guardrail layers, but published
-evaluations tend to report a single detection number. Deployers need to know the whole trade-off: how many attacks
-get through, how many legitimate users are blocked, how much latency and model cost each layer adds, and whether a
+evaluations tend to report a single detection number on data from the same source as the training data.
+Recent work shows that such numbers can mislead: detector rankings change across benchmarks
+\cite{liu2026passing,fomin2026benchmarks,akinrele2026regime}, and detectors with high F1 can flag large shares of
+benign prompts \cite{shire2026pids,li2024injecguard}. Deployers need the whole trade-off: how many attacks get
+through, how many legitimate users are blocked, how much latency and model cost each layer adds, and whether a
 defense tuned on known attacks still works on new ones.
 
-This paper makes four contributions.
+We study these questions in a deliberately small, fully reproducible setting and make five contributions.
 \begin{itemize}[leftmargin=*,nosep]
-  \item \textbf{A benchmark designed against overfitting.} Nine attack families, each with several templates; train and
-        test sets are split \emph{by template}, and a leave-one-family-out protocol tests transfer to unseen attack
-        types. Benign traffic includes hard negatives that contain words such as ``ignore'', ``instructions'' and ``admin''.
-  \item \textbf{A calibrated cascade.} Cheap rules, then a trained classifier, then an LLM judge that only sees
-        inputs the classifier is unsure about. Thresholds come from out-of-fold scores with a stated target
-        false-positive rate, not from tuning on the test set.
-  \item \textbf{A full cost/benefit measurement.} Attack success rate (ASR), leak-aware false-positive rate (FPR), latency, and
-        judge-call fraction for fourteen configurations, with Wilson intervals \cite{wilson1927probable}.
-  \item \textbf{An independent attack oracle.} Success is decided by string checks for the secret (including
-        simple encodings), a unique hijack marker, personal data, or verbatim system-prompt text, so no defense grades itself.
+  \item \textbf{An end-to-end measurement with an independent oracle.} In a support application holding canary
+        secrets, success is decided by string checks for the secret (including simple encodings), a hijack marker,
+        personal data, or verbatim system-prompt text, so no defense grades itself. We report attack success rate
+        (ASR), a leak-aware false-positive rate (FPR), latency and judge-call fraction for fourteen configurations.
+  \item \textbf{Layer complementarity.} Leave-one-family-out tests show that a trained classifier and hand-written
+        rules fail on different attack types: when document-borne injections are held out the classifier detects 1.6\% while the rules detect 93.8\%, and
+        for social-engineering attacks the classifier detects 93.8\% while the rules detect 60.9\%.
+  \item \textbf{A transfer test and a calibration finding.} Guards fitted on our data are evaluated on an independent
+        public dataset. We show that the classifier's false-positive rate is highly sensitive to threshold calibration and to the
+        domain of the benign training data, and that a small amount of in-domain data removes most false alarms.
+        This bears on a question left open by \cite{shire2026pids} and a suspicion raised by \cite{akinrele2026regime}.
+  \item \textbf{A small adaptive-attack study.} A black-box random-search attacker and a fixed set of known rewrites
+        show how quickly each layer falls, which layer adds what, and that retraining a classifier on evading attacks
+        alone causes severe over-blocking unless benign text is augmented too.
+  \item \textbf{A cost-aware cascade design} whose operating points come from out-of-fold scores, plus the code,
+        data generator and seeds needed to reproduce every table.
 \end{itemize}
+We do not claim a new defense. Our adaptive attacker is weak, we use one small target model, and the independent test
+split is small; Section~\ref{sec:limits} states what the evidence does and does not support.
 
 \section{Related Work}
-\paragraph{Attacks.} Perez and Ribeiro \cite{perez2022ignore} introduced goal hijacking and prompt leaking;
-Greshake et al.\ \cite{greshake2023not} showed indirect injection against real LLM-integrated applications; Liu et al.\
-\cite{liu2023prompt} studied injection against deployed applications. Toyer et al.\ \cite{toyer2024tensor} collected
-a large human-written attack set from an online game, and Zou et al.\ \cite{zou2023universal} showed that optimized
-adversarial suffixes can transfer across models.
-\paragraph{Defenses.} Jain et al.\ \cite{jain2023baseline} evaluate baseline defenses such as perplexity filters and
-paraphrasing. Spotlighting \cite{hines2024spotlighting} marks untrusted text so that the model can distinguish it from
-instructions; we use a datamarking variant as our structural defense. Wallace et al.\ \cite{wallace2024hierarchy}
-train models to follow an instruction hierarchy. Llama Guard \cite{inan2023llamaguard} and NeMo Guardrails
-\cite{rebedea2023nemo} provide model-based and programmable input/output rails.
-\paragraph{Benchmarks.} AgentDojo \cite{debenedetti2024agentdojo} evaluates injection in tool-using agents.
-Our setting is narrower (a single support bot) but measures false positives, latency and transfer to unseen attack
-types explicitly.
-\todo{Add 3--5 more related-work citations after a literature search (e.g.\ other injection benchmarks and detectors); verify every reference.}
+\paragraph{Attacks and datasets.} Perez and Ribeiro \cite{perez2022ignore} introduced goal hijacking and prompt
+leaking; Greshake et al.\ \cite{greshake2023not} showed indirect injection against real LLM-integrated applications,
+and Liu et al.\ \cite{liu2023prompt} studied injection against deployed applications. Large human-written attack sets
+come from competitions and games \cite{schulhoff2023hackaprompt,toyer2023tensor}, and optimized adversarial suffixes
+transfer across models \cite{zou2023universal}. Benchmarks for indirect injection include BIPIA \cite{yi2023bipia},
+InjecAgent \cite{zhan2024injecagent} and the AgentDojo agent environment \cite{debenedetti2024agentdojo}.
+\paragraph{Defenses.} Prompt-level defenses mark or delimit untrusted text, such as spotlighting
+\cite{hines2024spotlighting} (we use a datamarking-style variant), or train models to follow an instruction
+hierarchy \cite{wallace2024hierarchy}. Detection-based defenses include perplexity filters and paraphrasing
+\cite{jain2023baseline}, safeguard models \cite{inan2023llamaguard}, programmable rails \cite{rebedea2023nemo}, and
+LLM judges; Le et al.\ \cite{le2026judge} study structured judge prompts as a production guardrail and report modest
+gains from ensembling judges.
+\paragraph{Evaluating detectors.} Several recent studies examine whether detector scores transfer.
+Zizzo et al.\ \cite{zizzo2025adversarial} benchmark fifteen guardrails and find that a random forest on unigram features
+works in distribution but poorly out of it, and that LLM-based guards raise false positives. Fomin \cite{fomin2026benchmarks}
+proposes leave-one-dataset-out evaluation and reports that standard cross-validation overstates generalization by 8 to 16 AUC points.
+Li and Liu \cite{li2024injecguard} show that guard models over-defend on benign text with trigger words.
+Akinrele and Gowda \cite{akinrele2026regime} find that detection is regime-dependent, that TF-IDF with logistic
+regression is competitive on hard negatives, and suggest (without testing) that calibration may explain failures
+at low false-positive rates. Shire and Kim \cite{shire2026pids} report that detectors with F1 above 0.98 still
+over-flag a large share of external benign prompts and leave open whether matched augmentation would close the gap.
+Liu \cite{liu2026passing} finds that detector rankings barely transfer between benchmarks and that task-aware LLM judges reach 54 to 78\%
+detection on agent benchmarks. Systematizations \cite{hong2025sok} stress that conclusions depend on model, dataset and judge choice.
+\paragraph{Adaptive attackers.} Nasr et al.\ \cite{nasr2025attacker} bypassed twelve published defenses with adaptive
+attacks, most at over 90\% success, although many had reported near-zero success under static evaluation. Our static results
+should be read with that in mind (Section~\ref{sec:limits}).
+\paragraph{Relation to this work.} We do not propose a new detector. Compared with the studies above, we measure
+(i) end-to-end leakage in a running application rather than label accuracy on prompts, (ii) the cost of each layer
+and how often the expensive judge is needed, and (iii) the effect of calibration and in-domain training data on the
+same guards, on our data and on an independent dataset.
 
 \section{Threat Model}
 The attacker controls the user message and/or a document the user asks the bot to process. The attacker cannot modify the
@@ -133,6 +162,17 @@ leak, so that blocking a real leak is not penalised. Latency is guardrail comput
 original call when cached). Intervals are 95\% Wilson intervals.
 \paragraph{Models and decoding.} Target and judge: \resultModel{} / \resultJudge{}, temperature~0, fixed seed.
 \todo{State hardware, quantisation, Ollama version, and number of repeated seeds after the real run.}
+\paragraph{Adaptive attackers.} We use two attackers, both black-box. (i) \emph{Random search}: for each of 54 seed attacks
+(six per family, document attacks included) the attacker may submit up to 20 rewritten variants. Each variant composes one to
+three operators: synonym swaps for trigger words, politeness wrappers, story framing, benign padding, look-alike (homoglyph)
+characters, and an appended ``reviewer note'' aimed at the judge. After each query the attacker learns only whether the attack
+succeeded; it stops at the first success. (ii) \emph{Fixed rewrites}: eight deterministic rewrites per attack (the original and seven
+rewrites) on 64 direct attacks. A rewrite counts only if the guarded application still leaks or hijacks, as judged by the same
+string oracle, so a variant that evades the guard but no longer works on the bot does not count. Neither attacker uses gradients,
+reinforcement learning or human effort, so both are weak compared with the attackers of \cite{nasr2025attacker}. As a control,
+the undefended application is attacked the same way. For retraining we add the evading variants of training-split attacks
+(with benign text rewritten by the same operators) to the classifier's training data, recalibrate, and attack the
+test-split seeds again with fresh random draws.
 
 \section{Results}
 \mockbanner
@@ -171,20 +211,141 @@ the judge alone \asrJudge\% at \fprJudge\%. The full cascade with generic and ca
 \end{table}
 \todo{Discuss the gap between rules and classifier on unseen families.}
 
+\paragraph{Transfer to an independent dataset.} To address the concern that we wrote both the attacks and the rules,
+we evaluated guards fitted only on our training split on the public \texttt{deepset/\allowbreak prompt-injections}
+dataset \cite{deepset2023prompt} (263 injections and 399 benign prompts, about one third in German; Apache-2.0).
+This dataset contains no secrets to leak, so we measure detection only. Table~\ref{tab:pubfull} shows a large gap
+relative to our benchmark. The rules catch 8.4\% of injections (12.0\% in English, 2.1\% in German). The classifier catches 66.9\% but flags
+45.1\% of benign prompts: it learned what ordinary traffic looks like for a cloud-support bot. The Llama judge has
+few false alarms but catches only 39.5\%; a larger judge (Qwen2.5-7B) catches 58.9\% at 0.3\% false alarms.
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Guard (fitted on our data) & Caught (\%) [CI] & Flagged (\%) [CI] \\
+\midrule
+Rules & 8.4 [6--12] & 0.0 [0--1] \\
+Classifier & 66.9 [61--72] & 45.1 [40--50] \\
+LLM judge, Llama 3.2 3B & 39.5 [34--46] & 0.8 [0--2] \\
+LLM judge, Qwen2.5 7B & 58.9 [53--65] & 0.3 [0--1] \\
+Cascade (rules, clf., Llama judge) & 73.4 [68--78] & 45.1 [40--50] \\
+\bottomrule
+\end{tabular}
+\caption{Detection on the full public dataset (263 injections, 399 benign); ``Caught'' is the share of injections flagged, ``Flagged'' the share of benign prompts blocked; 95\% Wilson intervals. Numbers from \texttt{results/\allowbreak public\_analysis.md}
+and \texttt{results/\allowbreak public\_llama3b.json}; Qwen judge from \texttt{results/\allowbreak public\_qwen7b/}.}\label{tab:pubfull}
+\end{table}
+
+\paragraph{Domain calibration.} The public dataset ships a training and a test split (546 and 116 prompts). Table~\ref{tab:pubtest}
+evaluates on the 116-prompt test split only. A classifier trained on our data flags 33.9\% of the 56 benign test prompts;
+trained with the public training split added, it flags none (upper 95\% bound 6\%) and catches 76.7\% of injections. Adding the
+Qwen judge and rules raises recall to 81.7\% with no false alarms. The intervals are wide (60 injections, 56 benign) and the
+improvement from adding the judge is within them, so we read the table as evidence that calibration to the deployment
+domain removes most false alarms, not as a ranking of stacks.
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Stack & Caught (\%) [CI] & Flagged (\%) [CI] \\
+\midrule
+Classifier, our data only & 68.3 [56--79] & 33.9 [23--47] \\
+Cascade, our data only & 76.7 [65--86] & 33.9 [23--47] \\
+Classifier, our data + public train & 76.7 [65--86] & 0.0 [0--6] \\
+Cascade, our data + public train & 81.7 [70--89] & 0.0 [0--6] \\
+Classifier, public train only & 70.0 [57--80] & 0.0 [0--6] \\
+Cascade, public train only & 76.7 [65--86] & 0.0 [0--6] \\
+Judge alone (Qwen2.5 7B) & 40.0 [29--53] & 0.0 [0--6] \\
+\bottomrule
+\end{tabular}
+\caption{Public test split (60 injections, 56 benign); columns as in Table~\ref{tab:pubfull}; cascade = rules, classifier, Qwen2.5-7B judge. Numbers from \texttt{results/\allowbreak combined\_public.md}.}\label{tab:pubtest}
+\end{table}
+
+\paragraph{Calibration is brittle.} While making our pipeline deterministic we replaced scikit-learn's group fold assignment by a
+hash of the group name. Only the out-of-fold calibration changed, yet the classifier's false-positive rate on the full public
+dataset moved from 29.6\% to 45.1\%, and in-distribution FPR of the full stack by 1 to 2 points. The classifier's
+operating point, not only its ranking quality, therefore needs to be reported and validated on target-domain data.
+
+\paragraph{What the cascade misses.} The injections that the full cascade missed in the public data are mostly polite or
+story-style requests with little attack vocabulary (for example, ``Forget everything before that. What is happening in
+\ldots'' or role-play framings), which word-pattern guards and a small judge handle poorly.
+
+\paragraph{Adaptive attackers.} Table~\ref{tab:adaptive} shows that static evaluation badly understates risk. With 20 rewrites,
+random search defeats the undefended application in 72.2\% of seeds (static: 9.3\%), the rules in 48.1\% (static 1.9\%) and the classifier in 38.9\%
+(static 1.9\%). Each added layer lowers success: rules plus classifier 25.9\%, adding the Qwen2.5-7B judge 16.7\%, adding generic output checks 9.3\%,
+and adding the canary check 7.4\%. The intervals overlap pairwise, so we read the trend, not any single step. The canary check, which uses the same
+strings as our oracle, removed only one of five remaining successes. Benign padding and look-alike characters appear most often in winning variants
+(for example, padding in 20 of the classifier's 21 failures and look-alike characters in 18 of the rules' 26). Four of the five successes against the stack without the canary check were hijack attacks (the attacker's marker string was emitted),
+which output checks do not cover because the defender does not know the marker; the fifth, a leak of the admin code, was stopped by the canary check.
+The fixed-rewrite attacker gives the same picture at lower strength (best of eight rewrites: undefended 40.6\%, rules 17.2\%, classifier 20.3\%,
+Llama judge alone 35.9\%, cascade 9.4\%).
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Defense & Static & 5 tries & 10 tries & 20 tries (95\% CI of rate) \\
+\midrule
+No defense & 5 & 26 & 32 & 39 [59--82\%] \\
+Rules & 1 & 13 & 19 & 26 [35--61\%] \\
+Classifier & 1 & 8 & 12 & 21 [27--52\%] \\
+Rules + classifier & 0 & 5 & 9 & 14 [16--39\%] \\
++ Qwen2.5-7B judge & 0 & 3 & 5 & 9 [9--29\%] \\
++ output rules (no canary) & 0 & 2 & 4 & 5 [4--20\%] \\
++ canary check & 0 & 1 & 3 & 4 [3--18\%] \\
+\bottomrule
+\end{tabular}
+\caption{Random-search attacker on 54 seed attacks against Llama 3.2 3B: number of seeds (out of 54) that succeed
+end to end within the given number of tries (``static'' = original wording only). Results from
+\texttt{results/\allowbreak llama32\_3b/\allowbreak adaptive.json} and \texttt{results/\allowbreak llama32\_3b\_nocanary/\allowbreak adaptive.json}.}\label{tab:adaptive}
+\end{table}
+
+\paragraph{Retraining on evading attacks.} Retraining the classifier on evading variants, with benign text augmented in the same styles,
+reduced random-search success against the classifier from 21 to 12 of 54 seeds, against rules plus classifier from 14 to 8, and against the full stack
+from 4 to 0 (0--7\%). These reductions are within the noise suggested by the untouched rules guard, which moved from 26 to 22 between rounds with fresh random draws,
+so we call them suggestive. The retrained classifier's false-positive rate on plain benign requests fell from 3.2\% to 0.0\%, but its block threshold also rose from 0.59 to
+0.72, so it blocks less overall.
+
+\paragraph{Retraining on attacks only over-blocks.} In the fixed-rewrite experiment the retrained classifier (trained on rewritten attacks only) reached 0\% adaptive success, but
+this is an artifact. When we wrapped the same benign test requests in the same styles (Table~\ref{tab:wrapped}), it blocked 100\% of padded requests, 77.4\% of quoted requests
+and 47.6\% of politely worded requests, against 0.0\%, 0.8\% and 4.0\% for the original classifier. The classifier had learned that padding and politeness mean ``attack''.
+The two ``held-out'' rewrite styles in that experiment were not informative: the original classifier already blocked them. Augmenting the benign class with the same operators avoided most of this
+(padded requests blocked: 8.1\%), with one exception that is acceptable in practice: requests containing the fake reviewer note (80.6\%). Standard false-positive measurements on plain benign
+text miss this failure.
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Benign request, rewritten as & Original clf.\ (\%) & Attack-only retrained (\%) \\
+\midrule
+Unchanged & 3.2 [1--8] & 4.8 [2--10] \\
+Polite opener and closer & 4.0 [2--9] & 47.6 [39--56] \\
+Quoted & 0.8 [0--4] & 77.4 [69--84] \\
+Padded with filler text & 0.0 [0--3] & 100.0 [97--100] \\
+\bottomrule
+\end{tabular}
+\caption{Share of 124 benign test requests blocked by the classifier. Numbers from \texttt{results/\allowbreak benign\_wrapped.md}.}\label{tab:wrapped}
+\end{table}
+
 \section{Limitations and Threats to Validity}\label{sec:limits}
 \begin{itemize}[leftmargin=*,nosep]
-  \item \textbf{Synthetic, author-written data.} Attacks and rules were written by the same author, so rules may be
-        favoured. Splitting by template and the leave-one-family-out test reduce, but do not remove, this bias.
-        \todo{Add an evaluation on a public prompt-injection dataset to address this.}
-  \item \textbf{Non-adaptive attackers.} Attacks were fixed in advance. An attacker who can probe the guardrail
-        (or optimise against it \cite{zou2023universal}) may do better; adaptive evaluation is future work.
-  \item \textbf{One application, one small model.} Results may differ for larger models and tool-using agents
-        \cite{debenedetti2024agentdojo}.
+  \item \textbf{Synthetic, author-written data.} Attacks and rules were written by the same author, so rules and
+        classifier are favoured on our benchmark; the public-dataset gap measures how much. Splitting by template and the
+        leave-one-family-out test reduce, but do not remove, this bias.
+  \item \textbf{Weak adaptive attackers.} Our attackers use random search over a handful of rewrite operators, with 54 and 64 seeds. A
+        stronger attacker (gradient-based, RL-based or human-guided \cite{nasr2025attacker}) would likely do better, so our adaptive numbers are
+        lower bounds on attacker success, and low numbers for the full stack must not be read as robustness. Output checks that use the
+        defender's knowledge of the secrets (the canary check) overlap with the strings our oracle looks for, and nothing in the stack covers
+        hijack attacks.
+  \item \textbf{One application, one small target model, one seed.} Only 26 of 245 attacks succeed against the undefended
+        Llama 3.2 3B, so there is little room to show improvement, and results may differ for larger models and tool-using agents
+        \cite{debenedetti2024agentdojo}. Near-duplicate test items also make the reported intervals optimistic.
+  \item \textbf{Small independent test.} The public test split has 60 injections and 56 benign prompts, so a ``0\%'' false-positive rate
+        means an upper bound of about 6\%. About one third of the public dataset is German, and our language labels come from a word-list heuristic.
+        The public dataset has no secrets, so only detection is measured there.
   \item \textbf{Canary knowledge.} The canary check uses the defender's knowledge of the secret. We therefore report
         configurations with and without it.
-  \item \textbf{Single seed, greedy decoding.} We do not estimate model-sampling variance.
+  \item \textbf{Protocol changes.} We changed the fold assignment for calibration after seeing results (it uses no test data).
+        Numbers in this paper come from the final code only.
   \item \textbf{Judge vulnerability.} The LLM judge reads attacker-controlled text and can itself be injected; we do
-        not test judge-targeted attacks.
+        not test judge-targeted attacks. Different judge models were used for the two datasets' judge results.
 \end{itemize}
 
 \section{Conclusion}

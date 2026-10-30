@@ -143,7 +143,7 @@ def attack_one(g, oracle, row, budget, seed, rnd="r1"):
         if oracle.judge(res.text, row.get("marker")) is not None:
             first, winner = a, {"text": text[:400], "doc": (doc or "")[:400], "ops": names}
             break
-    return {"id": row["id"], "family": row["family"], "first_success": first, "evaded_input_at": evaded_first,
+    return {"id": row["id"], "family": row["family"], "goal": row.get("goal"), "first_success": first, "evaded_input_at": evaded_first,
             "winner": winner}
 
 
@@ -176,6 +176,11 @@ def summarise(results, budget):
         fam[r["family"]][1] += 1
         fam[r["family"]][0] += int(r["first_success"] is not None)
     row["by_family"] = {k: {"k": v[0], "n": v[1]} for k, v in sorted(fam.items())}
+    goal = defaultdict(lambda: [0, 0])
+    for r in results:
+        goal[str(r.get("goal"))][1] += 1
+        goal[str(r.get("goal"))][0] += int(r["first_success"] is not None)
+    row["by_goal"] = {k: {"k": v[0], "n": v[1]} for k, v in sorted(goal.items())}
     return row
 
 

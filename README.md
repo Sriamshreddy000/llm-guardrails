@@ -56,18 +56,18 @@ Use a laptop on power, and keep it cool: long runs on a fanless Air can throttle
 ## Results so far (Llama 3.2 3B, one seed; work in progress)
 
 On our own generated benchmark (245 attacks, 154 normal requests), rules + classifier + judge stop all attacks
-(0 of 245; 95% CI 0-1.5%) at a 3.9% false-positive rate; with no defense 10.6% of attacks succeed.
+(0 of 245; 95% CI 0-1.5%) at a 5.2-5.8% false-positive rate; with no defense 10.6% of attacks succeed.
 **This does not transfer.** On an independent public dataset ([deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections),
 263 injections, 399 benign), the same guards catch far fewer injections:
 
 | Guard | Injections caught | Normal prompts wrongly flagged |
 |---|---|---|
 | Rules | 8.4% | 0.0% |
-| Classifier | 60.5% | 29.6% |
+| Classifier | 66.9% | 45.1% |
 | LLM judge (Llama 3.2 3B) | 39.5% | 0.8% |
-| Full cascade | 71.1% | 29.6% |
+| Full cascade (Llama judge) | 73.4% | 45.1% |
 
-Retraining the classifier with public training data removes the false alarms (23% to 0% on the public test split)
+Retraining the classifier with public training data removes the false alarms (33.9% to 0% on the public test split)
 but recall stays near 70%. Full tables: `results/llama32_3b/report/tables.md` and `results/public_analysis.md`.
 Limitations: self-authored attacks, non-adaptive attacks, one small model, small public test split. Check the dataset license before reuse.
 
@@ -108,3 +108,24 @@ cd paper && pdflatex main && bibtex main && pdflatex main && pdflatex main
 - One small model, one app, one seed. Say so in the paper, and consider adding a second model with `--model`.
 - Verify every entry in `paper/references.bib` against its source before submitting anything.
 - Never present `--backend mock` output as a result.
+
+
+## Extra experiments (second model, hijack check, second public dataset)
+
+All of these are opt-in and write to their own `results/<name>/` folders; none of them changes the main results or `paper/generated`.
+
+```bash
+./scripts/run_extra.sh A     # same Llama target, Qwen judge in every judge-based configuration, plus the scope check
+./scripts/run_extra.sh B     # second target model (default qwen2.5:3b): full evaluation + adaptive attacker
+./scripts/run_extra.sh C     # second public dataset (check its licence first)
+./scripts/run_extra.sh D     # comparison table across runs -> results/compare_runs.md
+```
+
+* **Scope check** (`guardrails/scopecheck.py`): an output check that asks a model whether the reply is an on-task support
+  answer. It needs no knowledge of the attacker's string, so it can catch hijack attacks that the canary check cannot.
+  It costs one extra model call per request and can itself be attacked. Enable it with `run_eval.py --with-scope`.
+  `eval/hijack_report.py <run>` splits attack success into hijack vs other attacks and prints the cost of the check.
+* **Second public dataset**: `data/fetch_public.py --dataset ... --out data/public2.jsonl`, then
+  `eval/transfer_second.py --file data/public2.jsonl --name <name>`.
+* **Adding another target model**: `python eval/run_eval.py --backend ollama --model <tag> --out <name>` followed by
+  `python eval/make_report.py <name> --no-paper`.

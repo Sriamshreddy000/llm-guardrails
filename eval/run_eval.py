@@ -29,6 +29,7 @@ from guardrails.judge import JudgeLayer  # noqa: E402
 from guardrails.llm import AnthropicBackend, CachedBackend, MockBackend, OllamaBackend  # noqa: E402
 from guardrails.pipeline import Cascade, GuardedBot  # noqa: E402
 from guardrails.rules import CanaryOutput, GenericOutputRules, InputRules  # noqa: E402
+from guardrails.scopecheck import ScopeCheck  # noqa: E402
 from guardrails.target_app import Secrets, SupportBot  # noqa: E402
 
 
@@ -86,6 +87,7 @@ def build_configs(bot, secrets, backend, judge_backend, clf, lo):
     judge = JudgeLayer(judge_backend)
     out_gen = GenericOutputRules(bot.system_prompt)
     out_can = CanaryOutput([secrets.admin_code, secrets.email, secrets.phone])
+    scope = ScopeCheck(judge_backend)
     cas_rc = lambda: Cascade(rules, clf, None, lo=lo, hi=clf.threshold)        # noqa: E731
     cas_full = lambda: Cascade(rules, clf, judge, lo=lo, hi=clf.threshold)     # noqa: E731
     G = GuardedBot
@@ -104,6 +106,10 @@ def build_configs(bot, secrets, backend, judge_backend, clf, lo):
         "full":                G(bot, [cas_full()], [out_gen, out_can]),
         "full_nocanary_struct": G(bot, [cas_full()], [out_gen], structural=True),
         "full_struct":         G(bot, [cas_full()], [out_gen, out_can], structural=True),
+        # added for the hijack experiment: an output check that needs no knowledge of the attacker's string
+        "scope_out":           G(bot, [], [scope]),
+        "full_nocanary_scope": G(bot, [cas_full()], [out_gen, scope]),
+        "full_scope":          G(bot, [cas_full()], [out_gen, out_can, scope]),
     }
 
 
@@ -165,6 +171,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--per-family", type=int, default=0, help="cap test attacks per family (0 = all)")
     ap.add_argument("--configs", nargs="*", default=None)
+    ap.add_argument("--with-scope", action="store_true",
+                    help="also run the three scope-check configurations (one extra model call per request)")
     args = ap.parse_args()
 
     rows = load_rows()
@@ -194,6 +202,8 @@ def main():
     judge, configs = build_configs(bot, secrets, backend, jb, clf, lo)
     if args.configs:
         configs = {k: v for k, v in configs.items() if k in args.configs}
+    elif not args.with_scope:
+        configs = {k: v for k, v in configs.items() if "scope" not in k}
 
     print(f"backend={backend.name}  test attacks={sum(r['label'] for r in test)}  "
           f"test benign={sum(1 - r['label'] for r in test)}  configs={len(configs)}", flush=True)

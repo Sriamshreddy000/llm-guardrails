@@ -22,12 +22,15 @@ LABELS = {
     "cascade_rules_clf": "Cascade: rules, classifier", "cascade_full_in": "Cascade: rules, classifier, judge",
     "full_nocanary": "Full (no canary)", "full": "Full (+ canary)",
     "full_nocanary_struct": "Full (no canary) + structural", "full_struct": "Full (+ canary) + structural",
+    "scope_out": "Scope check (output)", "full_nocanary_scope": "Full (no canary) + scope check",
+    "full_scope": "Full (+ canary) + scope check",
 }
 GROUP = {"baseline": "none", "structural": "structural",
          "rules_in": "single", "clf_in": "single", "judge_in": "single", "rules_out": "single", "canary_out": "single",
          "rules_io": "combined", "cascade_rules_clf": "combined", "cascade_full_in": "combined",
-         "full_nocanary": "combined", "full": "combined", "full_nocanary_struct": "combined", "full_struct": "combined"}
-FAM_COLS = ["baseline", "rules_in", "clf_in", "judge_in", "full_nocanary", "full"]
+         "full_nocanary": "combined", "full": "combined", "full_nocanary_struct": "combined", "full_struct": "combined",
+         "scope_out": "single", "full_nocanary_scope": "combined", "full_scope": "combined"}
+FAM_COLS = ["baseline", "rules_in", "clf_in", "judge_in", "full_nocanary", "full", "scope_out", "full_nocanary_scope"]
 # Okabe-Ito colour-blind-safe palette; marker SHAPE also encodes the group, so colour is never the only cue
 STYLE = {"none": ("#000000", "s"), "structural": ("#E69F00", "D"), "single": ("#0072B2", "o"), "combined": ("#D55E00", "^")}
 
@@ -48,13 +51,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run")
     ap.add_argument("--allow-mock", action="store_true")
+    ap.add_argument("--no-paper", action="store_true",
+                    help="write only results/<run>/report/; never touch paper/generated (use for extra models and extra runs)")
     a = ap.parse_args()
     run_dir = ROOT / "results" / a.run
     S = json.loads((run_dir / "summary.json").read_text())
     meta, C = S["meta"], S["configs"]
     mock = meta["is_mock"]
     to_paper = (not mock) or a.allow_mock
-    if mock and not a.allow_mock:
+    if a.no_paper:
+        to_paper = False
+    if a.no_paper:
+        print("NOTE: --no-paper given. Writing the local report only; paper/ is untouched.")
+    elif mock and not a.allow_mock:
         print("NOTE: this run used the MOCK model. Writing local report only; paper/ is untouched.")
 
     rep = run_dir / "report"
@@ -145,7 +154,7 @@ def main():
         n = C[cols[0]]["asr_by_family"][f]["n"]
         frows.append(f"{tex(f)} & {n} & " + " & ".join(pct(C[c]["asr_by_family"][f]["asr"]) for c in cols) + " \\\\")
     heads = {"baseline": "None", "rules_in": "Rules", "clf_in": "Clf.", "judge_in": "Judge",
-             "full_nocanary": "Full", "full": "Full+C."}
+             "full_nocanary": "Full", "full": "Full+C.", "scope_out": "Scope", "full_nocanary_scope": "Full+Sc."}
     (gen / "tab_family.tex").write_text(
         "\\begin{tabular}{lr" + "r" * len(cols) + "}\n\\toprule\nFamily & $n$ & " + " & ".join(heads[c] for c in cols) +
         " \\\\\n\\midrule\n" + "\n".join(frows) + "\n\\bottomrule\n\\end{tabular}\n")

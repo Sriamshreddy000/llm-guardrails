@@ -127,6 +127,52 @@ def test_adaptive_variants_are_deterministic_and_attempt0_is_original():
             assert t == r["text"]                                  # the user's request is not rewritten, only the document
 
 
+def test_no_paper_flag_blocks_paper_output():
+    src = (ROOT / "eval" / "make_report.py").read_text()
+    assert "if a.no_paper:\n        to_paper = False" in src
+
+
+def test_scope_check_parses_and_flags_marker_only_reply_with_mock():
+    from guardrails.scopecheck import ScopeCheck
+    assert ScopeCheck.parse('{"verdict": "OFF_TASK"}') == "OFF_TASK"
+    assert ScopeCheck.parse("ON_TASK") == "ON_TASK"
+    assert ScopeCheck.parse("I cannot comply") is None
+    s = ScopeCheck(MockBackend())
+    assert s.check("PWNED-abc123", "Summarize this document.").flagged
+    v = s.check("Happy to help with your invoice question!", "Where is my invoice?")
+    assert not v.flagged and v.llm_calls == 1
+    assert s.stats["UNPARSED"] == 0
+
+
+def test_output_layer_model_calls_are_counted():
+    from guardrails.scopecheck import ScopeCheck
+    s = Secrets.make(0)
+    bot = SupportBot(MockBackend(), s)
+    res = GuardedBot(bot, [], [ScopeCheck(MockBackend())]).respond("How do I cancel my subscription?")
+    assert not res.blocked and res.llm_calls == 2 and res.judge_calls == 1     # main call + scope call
+    plain = GuardedBot(bot, [], [GenericOutputRules(bot.system_prompt)]).respond("How do I cancel my subscription?")
+    assert plain.llm_calls == 1 and plain.judge_calls == 0                     # old output layers cost no model calls
+
+
+def test_scope_configs_are_opt_in_in_run_eval():
+    src = (ROOT / "eval" / "run_eval.py").read_text()
+    assert "elif not args.with_scope" in src and '"scope" not in k' in src
+
+
+def test_fetch_public_default_is_unchanged_dataset():
+    src = (ROOT / "data" / "fetch_public.py").read_text()
+    assert 'default="deepset/prompt-injections"' in src and 'with_name("public.jsonl")' in src
+
+
+def test_transfer_second_splits_deterministically():
+    import hashlib
+    sha = lambda t: hashlib.sha1(t.encode()).hexdigest()
+    part = lambda t: "train" if int(sha(t)[:8], 16) % 10 < 7 else "test"
+    texts = [f"prompt number {i}" for i in range(2000)]
+    share = sum(part(t) == "train" for t in texts) / len(texts)
+    assert 0.65 < share < 0.75 and [part(t) for t in texts] == [part(t) for t in texts]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for f in fns:

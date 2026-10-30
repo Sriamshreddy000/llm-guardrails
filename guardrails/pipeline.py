@@ -75,6 +75,8 @@ class GuardedBot:
         # 3) output guards
         for layer in self.output_layers:
             v = layer.check(text, user_msg)
+            judge_calls += v.llm_calls            # output layers that call a model (e.g. the scope check) count as judge calls
+            model_sec += v.llm_latency
             trace.append((layer.name, v.flagged, v.reason))
             if v.flagged:
                 return Result(REFUSAL, True, layer.name, "output", total(), judge_calls + 1, judge_calls, trace)
